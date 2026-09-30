@@ -65,3 +65,18 @@ macOS launchd 실기기 테스트:
 - system sleep 방지의 장시간 실기기 검증. 구현은 macOS caffeinate를 사용한다.
 
 SQLite는 로컬 실행 이력이며 Supabase schema 변경이 아니다. 실제 사용 기록은 기존 테이블에 append만 한다.
+
+## Sequencing 단순화 검증 — weighted-neighbors-v2
+
+- A/B endpoint와 시간 기반 목표를 제거했다. 기존 10차원 표준화 RMS 거리는 유지한다.
+- sibling/잔여 배치 가능성을 만족하는 후보 중 가까운 최대 8곡에서 `exp(-거리 / 0.5)`로 추첨한다.
+- 별도의 cluster/repetition penalty는 없다. 기존 manifest는 저장된 순서 그대로 읽을 수 있다.
+- 자동 테스트 12개 통과: 가까운 후보 여러 개가 실제로 선택됨, 먼 후보 제외, 동일 profile 처리,
+  입력 순서 독립성, seed 재현, 기존 manifest 호환성을 포함한다.
+- 기존 실제 음원 5시간 snapshot의 113곡 선곡 집합이 동일함을 확인했다.
+  이 집합으로 100개 seed를 검사해 중복 recording/연속 sibling 0건, 동일 seed 순서 재현을 확인했다.
+- 기존 DB snapshot과 현재 MacBook 파일을 다시 읽어 seed `20260930`의 23곡, 3624.04초 session을 생성했다.
+  선택된 파일 전체의 SHA256/재생시간 preflight 및 동일 seed 순서 재현 통과.
+- `.local/session-neighbors-60min.json`과 원본 파일을 참조하는 동순서 `.m3u8`을 생성했다.
+- 새 manifest로 5초 실제 FFmpeg preview가 정상 완료됐다. 시청각 자연스러움은 아직 청취 평가하지 않았다.
+- Supabase 사용 이력 및 운영 visual 변경 없음. session과 재생목록은 Git 제외 경로에 저장했다.

@@ -104,12 +104,15 @@ slow-wednesday-radio sync-history
    recording ID, 제목, 파일명, 사용 횟수는 합치지 않는다. DB batch가 없는 파일명 fallback은 추정 관계다.
 6. `clap-relative-mood-v5.metrics.within_track_centered_profile`의 10개 mood를 사용한다.
    선택된 집합에서 각 차원을 표준화한 RMS Euclidean 거리로 계산한다.
-   멀리 떨어진 두 분위기 사이를 90분 주기의 부드러운 곡선으로 이동하는 목표를 만든다.
-   후보 점수는 `0.65 × 직전 곡 거리 + 0.35 × 현재 목표 거리`이다.
-   sibling 금지와 남은 곡의 배치 가능성을 우선 적용한다. 무작위 shuffle이나 순수 nearest-neighbor가 아니다.
-   분위기 다양성은 이 목표항으로 유도하며, 특정 장르/감정 비율을 보장하지 않는다.
+   첫 곡은 배치 가능한 곡 중 seed 기반 균등 선택한다.
+   이후 sibling 금지와 남은 곡의 배치 가능성을 만족하는 후보 중 현재 곡과 가까운 최대 8곡을 추린다.
+   각 후보에 `exp(-거리 / 0.5)` 가중치를 주고 seed 기반으로 하나를 선택한다.
+   거리가 0.5 더 멀면 상대 가중치는 약 0.368배다. 같은 거리에서는 recording ID로 정렬해 재현성을 유지한다.
+   별도의 mood trajectory나 cluster/repetition penalty는 없다. 가까운 후보들 사이에서 선택을 분산하지만,
+   특정 cluster의 최대 체류 시간을 보장하지는 않는다. 후반에 가까운 곡이 소진되면 전환 거리가 커질 수 있다.
 7. seed, 알고리즘 버전, 후보 snapshot, CLAP 값, 사용 횟수, 최종 순서를 manifest에 기록한다.
    같은 후보 snapshot과 seed로 동일한 선택·순서를 얻는다. 최신 DB로 같은 seed만 넣으면 이력 변화 때문에 달라질 수 있다.
+   새 manifest의 알고리즘은 `weighted-neighbors-v2`이다. 기존 manifest도 저장된 순서 그대로 재생할 수 있다.
 
 ## 송출과 사용 이력의 기준
 

@@ -10,7 +10,7 @@ import uuid
 
 from .catalog import ANALYZER, MOODS, RadioError, digest
 
-ALGORITHM = 'weighted-wave-v1'
+ALGORITHM = 'weighted-neighbors-v2'
 
 
 def feasible(groups, previous=None):
@@ -43,6 +43,9 @@ def select(tracks, target, rng):
 
 
 def sequence(tracks, rng):
+    tracks = sorted(tracks, key=lambda t: t['recording_id'])
+    if not tracks:
+        return []
     if len(tracks) == 1:
         return tracks[:]
     # Scale each mood using this selected snapshot; save these values in manifest inputs.
@@ -52,17 +55,10 @@ def sequence(tracks, rng):
     vectors = {t['recording_id']: [(v-mean[k])/std[k] for k,v in enumerate(t['mood'])] for t in tracks}
     def distance(a, b):
         return (sum((x-y)**2 for x,y in zip(a,b))/len(MOODS))**.5
-    start = rng.choice(tracks)['recording_id']
-    low = max(vectors, key=lambda i: (distance(vectors[start], vectors[i]), i))
-    high = max(vectors, key=lambda i: (distance(vectors[low], vectors[i]), i))
-    phase = rng.random() * math.tau
     remaining = {t['recording_id']:t for t in tracks}
     groups = Counter(t['sibling_group'] for t in tracks)
-    result, elapsed, previous = [], 0.0, None
+    result, previous = [], None
     while remaining:
-        # A 90-minute mood arc repeatedly moves through the available range.
-        mix = (1 - math.cos(phase + elapsed/5400 * math.tau))/2
-        target = [(1-mix)*a + mix*b for a,b in zip(vectors[low], vectors[high])]
         candidates = []
         for rid, track in remaining.items():
             group = track['sibling_group']
@@ -74,16 +70,22 @@ def sequence(tracks, rng):
             if not possible:
                 continue
             transition = distance(vectors[result[-1]['recording_id']], vectors[rid]) if result else 0
-            score = .65 * transition + .35 * distance(vectors[rid], target)
-            candidates.append((score, rid))
+            candidates.append((transition, rid))
         if not candidates:
             raise RadioError('sibling adjacency를 피할 수 없습니다.')
-        _, rid = min(candidates)
+        if not result:
+            # No current mood yet: choose uniformly among feasible starting tracks.
+            _, rid = rng.choice(candidates)
+        else:
+            nearby = sorted(candidates)[:8]
+            nearest = nearby[0][0]
+            # Equivalent to exp(-distance / 0.5); subtract nearest to avoid underflow.
+            weights = [math.exp(-(d - nearest) / .5) for d, _ in nearby]
+            _, rid = rng.choices(nearby, weights=weights, k=1)[0]
         track = remaining.pop(rid)
         result.append(track)
         previous = track['sibling_group']
         groups[previous] -= 1
-        elapsed += track['samples']/48000
     return result
 
 
@@ -120,7 +122,8 @@ def save_json(path, data):
 
 def read_manifest(path):
     m = json.loads(Path(path).read_text())
-    if m.get('schema_version') != 1 or m.get('algorithm') != ALGORITHM:
+    # Older manifests already contain their final order; streaming need not resequence.
+    if m.get('schema_version') != 1 or m.get('algorithm') not in (ALGORITHM, 'weighted-wave-v1'):
         raise RadioError('지원하지 않는 manifest 버전입니다.')
     uuid.UUID(m['session_id'])
     offset, ids, previous = 0, set(), None

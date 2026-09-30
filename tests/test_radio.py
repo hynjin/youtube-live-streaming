@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 from slow_wednesday_radio.catalog import RadioError, Supabase, resolve_uri, use_counts
 from slow_wednesday_radio.history import Journal, lock
-from slow_wednesday_radio.planning import feasible, select, sequence
+from slow_wednesday_radio.planning import ALGORITHM, feasible, read_manifest, select, sequence
 from slow_wednesday_radio.streaming import consume_visual, encoder_command
 
 
@@ -73,6 +73,38 @@ class PlannerTests(unittest.TestCase):
         self.assertFalse(feasible({'a':3,'b':2},'a'))
         result=sequence([track(i,group='a' if i%2==0 else 'b') for i in range(5)],random.Random(1))
         self.assertEqual([t['sibling_group'] for t in result],list('ababa'))
+
+    def test_nearby_sampling_varies_and_excludes_distant_candidates(self):
+        class FixedStart(random.Random):
+            def choice(self, candidates):
+                return next(c for c in candidates if c[1] == '0')
+        pool = [track(i) for i in range(12)]
+        for i, t in enumerate(pool):
+            t['mood'] = [float(i)] * 10
+        seconds = [sequence(pool, FixedStart(seed))[1]['recording_id'] for seed in range(500)]
+        self.assertTrue(set(seconds).issubset({str(i) for i in range(1, 9)}))
+        self.assertGreaterEqual(len(set(seconds)), 5)
+        self.assertGreater(seconds.count('1'), seconds.count('8'))
+
+    def test_equal_profiles_and_input_order(self):
+        pool = [track(i, group=str(i//2)) for i in range(20)]
+        for t in pool:
+            t['mood'] = [0.] * 10
+        a = sequence(pool, random.Random(19))
+        b = sequence(list(reversed(pool)), random.Random(19))
+        self.assertEqual(a, b)
+        self.assertEqual(len({t['recording_id'] for t in a}), 20)
+        self.assertTrue(all(x['sibling_group'] != y['sibling_group'] for x,y in zip(a,a[1:])))
+
+    def test_existing_manifest_remains_playable(self):
+        manifest = dict(schema_version=1, session_id='11111111-1111-4111-8111-111111111111',
+                        tracks=[track(0)], duration_seconds=180, visual={'filename':'test.png'})
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d)/'session.json'
+            for algorithm in ('weighted-wave-v1', ALGORITHM):
+                manifest['algorithm'] = algorithm
+                path.write_text(json.dumps(manifest))
+                self.assertEqual(read_manifest(path)['tracks'], manifest['tracks'])
 
 
 class HistoryTests(unittest.TestCase):
